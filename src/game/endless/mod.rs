@@ -2,12 +2,15 @@ use console::{ InputType, ArrowType };
 use tile::Tile;
 use tile::base::Base;
 use game::Game;
-use ui::Ui;
+use ui::*;
 
 mod room;
+mod player;
 
 use game::endless::room::Room;
 use game::endless::room::square::SquareRoom;
+
+use game::endless::player::Player;
 
 use uuid::Uuid;
 use rand::prelude::*;
@@ -18,30 +21,6 @@ use std::mem;
 
 use utils::{ rnd_within, rnd_lt, rnd_string };
 
-struct PlayerInfo {
-    room: Uuid,
-    x: usize,
-    y: usize,
-}
-
-impl PlayerInfo {
-    fn new(room: Uuid, x: usize, y: usize) -> PlayerInfo {
-        PlayerInfo {
-            room: room,
-            x: x,
-            y: y,
-        }
-    }
-
-    fn nil() -> PlayerInfo {
-        PlayerInfo {
-            room: Uuid::nil(),
-            x: 0,
-            y: 0,
-        }
-    }
-}
-
 type RoomDoor = (Uuid, usize);
 
 pub struct EndlessGame {
@@ -49,7 +28,7 @@ pub struct EndlessGame {
 
     //  if (A, B) is in links, then (B, A) is in links
     links: HashMap<RoomDoor, RoomDoor>,
-    player: PlayerInfo,
+    player: Player,
 
     //  should be None when buffer is invalid, i.e. doesn't match size
     buffer: Option<Vec<Tile>>,
@@ -121,11 +100,21 @@ impl EndlessGame {
 
         let uuid = uuids[random::<usize>() % uuids.len()].clone();
 
-        self.player = PlayerInfo::new(
+        self.player = Player::new(
             uuid,
             rnd_lt(self.rooms.get(&uuid).unwrap().get_width() - 2) + 1,
             rnd_lt(self.rooms.get(&uuid).unwrap().get_height() - 2) + 1
         );
+    }
+
+    fn mysterious_message() -> &'static str {
+        match rnd_lt::<u8>(5) {
+            0 => "Message number 0.",
+            1 => "Message number 1.",
+            2 => "Message number 2.",
+            3 => "Message number 3.",
+            _ => "Message number 4.",
+        }
     }
 }
 
@@ -134,7 +123,7 @@ impl Game for EndlessGame {
         let mut res = Self {
             rooms: HashMap::new(),
             links: HashMap::new(),
-            player: PlayerInfo::nil(),
+            player: Player::nil(),
             buffer: None,
             buf_width: buf_width,
             buf_height: buf_height,
@@ -153,14 +142,21 @@ impl Game for EndlessGame {
         match input {
             InputType::FirstFrame => {
                 res.push(Ui::Message(
-                    format!("This is {} reporting from room {}.", rnd_string(10), self.player.room.simple())
+                    MessageType::Static,
+                    MessagePosition::Bottom,
+                    format!(
+                        "Hello {}, you are now in room {}. {}",
+                        rnd_string(10),
+                        self.player.get_room().simple(),
+                        Self::mysterious_message()
+                    )
                 ));
             },
 
             InputType::Arrow(arrow) => {
-                let room = self.rooms.get(&self.player.room).unwrap();
-                let x = self.player.x;
-                let y = self.player.y;
+                let room = self.rooms.get(self.player.get_room()).unwrap();
+                let x = self.player.get_x();
+                let y = self.player.get_y();
 
                 let mut nx = x;
                 let mut ny = y;
@@ -173,22 +169,31 @@ impl Game for EndlessGame {
 
                 match room.get_tile(nx, ny).map(|tile| &tile.base) {
                     Some(&Base::Ground) => {
-                        self.player.x = nx;
-                        self.player.y = ny;
+                        self.player.set_x(nx);
+                        self.player.set_y(ny);
                     },
 
                     Some(&Base::Door(idx)) => {
                         let &(to_room, to_door) =
-                            self.links.get(&(self.player.room, idx)).unwrap();
+                            self.links.get(&(self.player.get_room().clone(), idx)).unwrap();
 
-                        self.player.room = to_room.clone();
-                        self.player.x =
-                            rnd_lt(self.rooms.get(&to_room).unwrap().get_width() - 2) + 1;
-                        self.player.y = 
-                            rnd_lt(self.rooms.get(&to_room).unwrap().get_height() - 2) + 1;
+                        self.player.set_room(to_room.clone());
+                        self.player.set_x(
+                            rnd_lt(self.rooms.get(&to_room).unwrap().get_width() - 2) + 1
+                        );
+                        self.player.set_y(
+                            rnd_lt(self.rooms.get(&to_room).unwrap().get_height() - 2) + 1
+                        );
 
                         res.push(Ui::Message(
-                            format!("This is {} reporting from room {}.", rnd_string(10), to_room.simple())
+                            MessageType::Static,
+                            MessagePosition::Bottom,
+                            format!(
+                                "Hello {}, you are now in room {}. {}",
+                                rnd_string(10),
+                                to_room.simple(),
+                                Self::mysterious_message()
+                            )
                         ));
                     },
 
@@ -209,11 +214,11 @@ impl Game for EndlessGame {
     }
 
     fn gen_buffer(&mut self) -> Option<&Vec<Tile>> {
-        let room = self.rooms.get(&self.player.room).unwrap();
+        let room = self.rooms.get(self.player.get_room()).unwrap();
         let mut tiles: Vec<Tile> = Vec::new();
 
-        let px = self.player.x as i32;
-        let py = self.player.y as i32;
+        let px = self.player.get_x() as i32;
+        let py = self.player.get_y() as i32;
         let bw = self.buf_width as i32;
         let bh = self.buf_height as i32;
 

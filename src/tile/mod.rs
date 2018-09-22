@@ -24,6 +24,14 @@ impl Tile {
         }
     }
 
+    pub fn ground() -> Tile {
+        Tile {
+            base: Base::Ground,
+            cover: Option::default(),
+            style: Style::DEF_DIM,
+        }
+    }
+
     pub fn wall() -> Tile {
         Tile {
             base: Base::Wall,

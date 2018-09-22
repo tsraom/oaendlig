@@ -28,7 +28,7 @@ pub trait Console {
     fn new() -> Self;
 
     /// Enters a rendering loop, consuming a Game.
-    fn render<G>(&mut self, mut game: G) where G: Game;
+    fn render<G>(&mut self, game: G) where G: Game;
 
     /// Gets width and height of the console, in tiles.
     fn get_width(&self) -> usize;

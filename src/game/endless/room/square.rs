@@ -34,7 +34,7 @@ impl SquareRoom {
                     random::<usize>() % min_clamp == 0;
 
                 match is_wall {
-                    false => { self.tiles.push(Tile::default()); },
+                    false => { self.tiles.push(Tile::ground()); },
                     true => {
                         match is_door {
                             false => { self.tiles.push(Tile::wall()); },

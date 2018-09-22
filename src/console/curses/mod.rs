@@ -1,7 +1,9 @@
 pub mod messages;
+mod glitcher;
 
 use console::{ Console, InputType, ArrowType, KeyType };
 use console::curses::messages::bottom::BottomMessage;
+use console::curses::glitcher::Glitcher;
 use game::Game;
 use tile::Tile;
 use tile::base::Base;
@@ -14,56 +16,134 @@ use rand::prelude::*;
 
 use std::{thread, time};
 
+const CLR_BLACK: i16 = 0;
+const CLR_RED: i16 = 1;
+const CLR_GREEN: i16 = 2;
+const CLR_YELLOW: i16 = 3;
+const CLR_BLUE: i16 = 4;
+const CLR_MAGENTA: i16 = 5;
+const CLR_CYAN: i16 = 6;
+const CLR_WHITE: i16 = 7;
+
+const CLR_DARK1: i16 = 8;
+const CLR_DARK2: i16 = 9;
+const CLR_DARK3: i16 = 10;
+const CLR_DARK4: i16 = 11;
+const CLR_DARK5: i16 = 12;
+const CLR_DARK6: i16 = 13;
+const CLR_DARK7: i16 = 14;
+const CLR_DARK8: i16 = 15;
+
 pub struct CursesConsole {
     window: Window,
     message: Option<BottomMessage>,
-    first_frame: bool,
+    frame: usize,
+    glitcher: Glitcher,
+    use_colors: bool,
 }
 
 impl CursesConsole {
-    fn apply_style(&self, style: &Style) {
-        //  first turn off all attributes
-        self.window.attrset(A_NORMAL);
+    fn make_style(&self, style: &Style) -> chtype {
+        let mut res = A_NORMAL;
 
         if style.intersects(Style::STANDOUT) {
             //  for some reason A_STANDOUT doesn't compile
-            //  self.window.attron(A_STANDOUT);
+            //  res |= A_STANDOUT;
         }
 
         if style.intersects(Style::BOLD) {
-            self.window.attron(A_BOLD);
+            res |= A_BOLD;
         }
 
         if style.intersects(Style::UNDERLINE) {
-            self.window.attron(A_UNDERLINE);
+            res |= A_UNDERLINE;
         }
 
         if style.intersects(Style::DIM) {
-            self.window.attron(A_DIM);
+            res |= A_DIM;
         }
+
+        if self.use_colors {
+            if style.intersects(Style::BLACK) {
+                res |= COLOR_PAIR(CLR_BLACK as u64);
+            }
+
+            if style.intersects(Style::RED) {
+                res |= COLOR_PAIR(CLR_RED as u64);
+            }
+
+            if style.intersects(Style::GREEN) {
+                res |= COLOR_PAIR(CLR_GREEN as u64);
+            }
+
+            if style.intersects(Style::YELLOW) {
+                res |= COLOR_PAIR(CLR_YELLOW as u64);
+            }
+
+            if style.intersects(Style::BLUE) {
+                res |= COLOR_PAIR(CLR_BLUE as u64);
+            }
+
+            if style.intersects(Style::MAGENTA) {
+                res |= COLOR_PAIR(CLR_MAGENTA as u64);
+            }
+
+            if style.intersects(Style::CYAN) {
+                res |= COLOR_PAIR(CLR_CYAN as u64);
+            }
+
+            if style.intersects(Style::WHITE) {
+                res |= COLOR_PAIR(CLR_WHITE as u64);
+            }
+
+            if style.intersects(Style::DARK1) {
+                res |= COLOR_PAIR(CLR_DARK1 as u64);
+            }
+
+            if style.intersects(Style::DARK2) {
+                res |= COLOR_PAIR(CLR_DARK2 as u64);
+            }
+
+            if style.intersects(Style::DARK3) {
+                res |= COLOR_PAIR(CLR_DARK3 as u64);
+            }
+
+            if style.intersects(Style::DARK4) {
+                res |= COLOR_PAIR(CLR_DARK4 as u64);
+            }
+
+            if style.intersects(Style::DARK5) {
+                res |= COLOR_PAIR(CLR_DARK5 as u64);
+            }
+
+            if style.intersects(Style::DARK6) {
+                res |= COLOR_PAIR(CLR_DARK6 as u64);
+            }
+
+            if style.intersects(Style::DARK7) {
+                res |= COLOR_PAIR(CLR_DARK7 as u64);
+            }
+
+            if style.intersects(Style::DARK8) {
+                res |= COLOR_PAIR(CLR_DARK8 as u64);
+            }
+        }
+
+        res
     }
 
-    fn draw(&self, buffer: &Vec<Tile>) {
-        let mut curr_style = Style::default();
+    fn draw(&mut self, buffer: &Vec<Tile>) {
+        let mut x: usize = 0;
+        let mut y: usize = 0;
+        let ww: usize = self.get_width();
 
-        self.window.mv(0, 0);
         for tile in buffer.iter() {
             let base = &tile.base;
             let cover = &tile.cover;
             let style = &tile.style;
 
-            if curr_style != *style {
-                self.apply_style(style);
-                curr_style = *style;
-            }
-
-            let mut chance: usize = 2000;
             let ch = match base {
-                &Base::Void => {
-                    chance = 0;
-                    ' '
-                },
-
+                &Base::Void => ' ',
                 &Base::Player => 'o',
                 &Base::Ground => '.',
                 &Base::Wall => 'X',
@@ -72,24 +152,46 @@ impl CursesConsole {
                 &Base::Door(ref x) => 'd',
             };
 
-            self.window.addch(Self::glit_ch(ch as u64, chance));
+            let ch = (ch as chtype) | self.make_style(style);
+            self.glitcher.write(x, y, ch);
+
+            x += 1;
+            x %= ww;
+            if (x == 0) {
+                y += 1;
+            }
         }
     }
 
-    fn draw_message(&self, msg: &BottomMessage) {
+    fn draw_message(&mut self) {
+        if let None = self.message {
+            return;
+        }
+
+        let msg = self.message.as_ref().unwrap();
+
+        //  margins
+        let xm: usize = 1;
+        let ym: usize = 0;
+
         let ww = self.get_width();
         let wh = self.get_height();
 
         let text = msg.get_text();
-        let mut num_lines = text.len() / (ww - 4);
-        if text.len() % (ww - 4) > 0 {
+        let text_width = ww - 2 - 2 * xm;
+        let mut num_lines = text.len() / text_width;
+        if text.len() % text_width > 0 {
             num_lines += 1;
         }
 
-        let sx = 0;
-        let sy = wh - 4 - num_lines;
+        //  if we don't have enough space to draw the message, don't draw
+        if wh < 2 + 2 * ym + num_lines {
+            return;
+        }
 
-        self.window.mv(sy as i32, sx as i32);
+        let sx = 0;
+        let sy = wh - 2 - 2 * ym - num_lines;
+
         for y in sy..wh {
             for x in sx..ww {
                 let ch = match (x == sx, x == ww - 1, y == sy, y == wh - 1) {
@@ -101,70 +203,90 @@ impl CursesConsole {
                     (_, _, _, true) => ACS_HLINE(),
                     (true, _, _, _) => ACS_VLINE(),
                     (_, true, _, _) => ACS_VLINE(),
-                    _ => ' ' as u64,
+                    _ => ' ' as chtype,
                 };
 
-                self.window.addch(Self::glit_ch(ch, 2000));
+                self.glitcher.write(x, y, ch);
             }
         }
 
         for line in 0..num_lines {
+            let start = line * text_width;
             let end = match line == num_lines - 1 {
-                true => text.len() % (ww - 4),
-                false => (line + 1) * (ww - 4),
+                true => start + text.len() % text_width,
+                false => (line + 1) * text_width,
             };
 
-            self.window.mvaddstr(
-                (sy + 2 + line) as i32,
-                (sx + 2) as i32,
-                &text[line * (ww - 4)..end]
+            self.glitcher.write_str(
+                sx + 1 + xm,
+                sy + 1 + ym + line,
+                &text[start..end]
             );
         }
     }
 
-    fn glit_ch(ch: u64, chance: usize) -> u64 {
-        match chance > 0 && rnd_lt::<usize>(chance) == 0 {
-            true => Self::rnd_ch(),
-            false => ch,
-        }
-    }
 
-    fn rnd_ch() -> u64 {
-        match rnd_lt::<u8>(17) {
-            0 => ACS_ULCORNER(),
-            1 => ACS_URCORNER(),
-            2 => ACS_LLCORNER(),
-            3 => ACS_LRCORNER(),
-            4 => ACS_LTEE(),
-            5 => ACS_RTEE(),
-            6 => ACS_BTEE(),
-            7 => ACS_TTEE(),
-            8 => ACS_HLINE(),
-            9 => ACS_VLINE(),
-            10 => ACS_S1(),
-            11 => ACS_S3(),
-            12 => ACS_S7(),
-            13 => ACS_S9(),
-            14 => ACS_DIAMOND(),
-            15 => ACS_DEGREE(),
-            16 => ACS_BULLET(),
-            _ => ' ' as u64,
+
+    fn init_colors(&mut self) {
+        if
+            has_colors() &&
+            can_change_color() &&
+            COLORS() >= 16 &&
+            COLOR_PAIRS() >= 16
+        {
+            self.use_colors = true;
+
+            init_color(CLR_DARK1, 111, 111, 111);
+            init_color(CLR_DARK2, 222, 222, 222);
+            init_color(CLR_DARK3, 333, 333, 333);
+            init_color(CLR_DARK4, 444, 444, 444);
+            init_color(CLR_DARK5, 555, 555, 555);
+            init_color(CLR_DARK6, 666, 666, 666);
+            init_color(CLR_DARK7, 777, 777, 777);
+            init_color(CLR_DARK8, 888, 888, 888);
+
+            init_pair(CLR_BLACK,    CLR_BLACK,      CLR_BLACK);
+            init_pair(CLR_RED,      CLR_RED,        CLR_BLACK);
+            init_pair(CLR_GREEN,    CLR_GREEN,      CLR_BLACK);
+            init_pair(CLR_YELLOW,   CLR_YELLOW,     CLR_BLACK);
+            init_pair(CLR_BLUE,     CLR_BLUE,       CLR_BLACK);
+            init_pair(CLR_MAGENTA,  CLR_MAGENTA,    CLR_BLACK);
+            init_pair(CLR_CYAN,     CLR_CYAN,       CLR_BLACK);
+            init_pair(CLR_WHITE,    CLR_WHITE,      CLR_BLACK);
+
+            init_pair(CLR_DARK1,    CLR_DARK1,      CLR_BLACK);
+            init_pair(CLR_DARK2,    CLR_DARK2,      CLR_BLACK);
+            init_pair(CLR_DARK3,    CLR_DARK3,      CLR_BLACK);
+            init_pair(CLR_DARK4,    CLR_DARK4,      CLR_BLACK);
+            init_pair(CLR_DARK5,    CLR_DARK5,      CLR_BLACK);
+            init_pair(CLR_DARK6,    CLR_DARK6,      CLR_BLACK);
+            init_pair(CLR_DARK7,    CLR_DARK7,      CLR_BLACK);
+            init_pair(CLR_DARK8,    CLR_DARK8,      CLR_BLACK);
         }
     }
 }
 
 impl Console for CursesConsole {
     fn new() -> Self {
-        let res = Self {
-            window: initscr(),
+        let window = initscr();
+        let ww = window.get_max_x() as usize;
+        let wh = window.get_max_x() as usize;
+
+        let mut res = Self {
+            window: window,
             message: None,
-            first_frame: true,
+            frame: 0,
+            glitcher: Glitcher::new(ww, wh),
+            use_colors: false,
         };
 
         raw();
         noecho();
+        start_color();
         res.window.keypad(true);
         res.window.nodelay(true);
+
+        res.init_colors();
 
         res
     }
@@ -173,8 +295,7 @@ impl Console for CursesConsole {
         loop {
             let res;
 
-            if self.first_frame {
-                self.first_frame = false;
+            if self.frame == 0 {
                 res = InputType::FirstFrame;
             }
             else {
@@ -214,10 +335,11 @@ impl Console for CursesConsole {
 
                     Some(Input::KeyResize) => {
                         resize_term(0, 0);
-                        InputType::Resize(
-                            self.window.get_max_x() as u32,
-                            self.window.get_max_y() as u32,
-                            )
+
+                        let nww = self.window.get_max_x();
+                        let nwh = self.window.get_max_y();
+                        self.glitcher.resize(nww as usize, nwh as usize);
+                        InputType::Resize(nww as u32, nwh as u32)
                     },
 
                     _ => InputType::Char('a'),
@@ -227,7 +349,7 @@ impl Console for CursesConsole {
             let uis = game.react(res);
             for ui in uis.into_iter() {
                 match ui {
-                    Ui::Message(s) => {
+                    Ui::Message(_, _, s) => {
                         self.message = Some(BottomMessage::new(s));
                     },
                 }
@@ -235,13 +357,15 @@ impl Console for CursesConsole {
 
             let buffer = game.gen_buffer();
             buffer.as_ref().map(|buf| {
-                self.window.clear();
                 self.draw(buf);
             });
 
-            self.message.as_ref().map(|msg| {
-                self.draw_message(msg);
-            });
+            self.draw_message();
+
+            self.glitcher.update();
+            self.glitcher.render(&self.window);
+
+            self.frame += 1;
 
             thread::sleep(time::Duration::from_millis(10));
         }
